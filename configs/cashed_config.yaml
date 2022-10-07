@@ -1,0 +1,65 @@
+gpus: [ 0 ]
+data:
+  root_path: '/home/user/dataset/MegaDepth/'
+  train_list_path: '/home/user/code/GluePipeline/asset_split/megadepth_train_2.0.txt'
+  val_list_path: '/home/user/code/GluePipeline/asset_split/megadepth_valid_2.0.txt'
+  test_list_path: '/home/user/code/GluePipeline/asset_split/megadepth_valid_2.0.txt'
+  features_dir: '/home/user/dataset/MegaDepth/features/SuperPointNet_960_720'
+  max_keypoints: 1024
+  batch_size_per_gpu: 10
+  dataloader_workers_per_gpu: 8
+  target_size: [960, 720]
+  val_max_pairs_per_scene: 50
+  train_pairs_overlap: [0.15, 0.7]
+
+logging:
+  pose_auc_root_path: '/home/user/code/GluePipeline/logs/pos_auc'
+  maa_path_root: '/home/user/code/GluePipeline/logs/maa'
+  homography_path_root: '/home/user/code/GluePipeline/logs/homography'
+  # name: 'testing'
+  # train_logs_steps: 50
+
+train:
+  epochs: 100
+  steps_per_epoch: 50000
+  precision: 32
+  gt_positive_threshold: 2
+  gt_negative_threshold: 7
+  margin: null
+  lr: 1.0e-4
+  scheduler_gamma: 0.999994
+  use_cached_features: True
+  seed: 0
+  weight_save_path: '/home/user/code/GluePipeline/sota_weights'
+  save_interval: 1
+  # sota_weight_path: '/home/user/code/GluePipeline/sota_weights/0922_imc2022_geometry_geo_pos_True_geo_rot_True_limit_100000/model-epoch3.pth'
+
+
+evaluation:
+  epipolar_dist_threshold: 5.0e-4
+  camera_auc_thresholds: [5.0, 10.0, 20.0]
+  camera_auc_ransac_inliers_threshold: 1.0
+
+inference:
+  match_threshold: 0.2
+
+matching:
+  name: 'IMCNet'
+  geometric_position: True
+  geometric_orientation: False
+  descriptor_dim: 256
+  laf_to_sideinfo_method: 'none'
+  # positional_encoding:
+  #   output_size: 256
+  #   hidden_layers_sizes: [32, 64, 128]
+  # attention_gnn:
+  #   embed_dim: 256
+  #   num_stages: 9
+  #   num_heads: 4
+  #   attention: 'softmax'
+  #   use_offset: False
+  # dustbin_score_init: 1.0
+  # otp:
+  #   num_iters: 20
+  #   reg: 1.0
+  residual: True
