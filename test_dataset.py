@@ -1,4 +1,4 @@
-from dataset.megadepth import MegaDepthCachedDataset
+from dataset.megadepth_v2 import MegaDepthCachedDataset
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, BatchSampler
@@ -40,8 +40,8 @@ loader = DataLoader(ds, batch_size, shuffle=True, collate_fn=ds.collate_fn)
 # )
     
 for i, batch_data in enumerate(tqdm(loader)):
-    lafs0, responses0, desc0 = batch_data['keypoints0'], batch_data['scores0'], batch_data['descriptors0']
-    lafs1, responses1, desc1 = batch_data['keypoints1'], batch_data['scores1'], batch_data['descriptors1']
+    lafs0, responses0, desc0 = batch_data['lafs0'], batch_data['scores0'], batch_data['descriptors0']
+    lafs1, responses1, desc1 = batch_data['lafs1'], batch_data['scores1'], batch_data['descriptors1']
     im0_size, im1_size = batch_data['image0_size'], batch_data['image1_size']
     
     gt_matches0 = batch_data['ground_truth']['gt_matches0']
@@ -52,8 +52,8 @@ for i, batch_data in enumerate(tqdm(loader)):
     depth0, depth1 = transformation['depth0'], transformation['depth1']
 
     print(f'**************{i}-th iter**************')
-    print('kpts0 shape:', lafs0.shape)
-    print('kpts1 shape:', lafs1.shape)
+    print('lafs0 shape:', lafs0.shape)
+    print('lafs1 shape:', lafs1.shape)
     print('responses0 shape:', responses0.shape)
     print('responses1 shape:', responses1.shape)
     print('desc0 shape:', desc0.shape)
