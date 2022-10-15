@@ -1,7 +1,9 @@
 import numpy as np
 import torch
+import kornia
 
 from utils.geometry import pairwise_cosine_dist
+from utils.geometry import normalize_with_intrinsics
 
 
 def criterion(y_true, y_pred, margin=None):
@@ -46,11 +48,31 @@ def criterion(y_true, y_pred, margin=None):
         dist=dist, margin=margin, indexes=(batch_idx, idx_kpts1),
         mean_weights=mean_weights, zero_to_one=False
     )
-
+    
     return {
         'loss': (matched_loss + 0.5 * (unmatched0_loss + unmatched1_loss)) / scores.size(0),
         'metric_loss': (matched_triplet_loss + unmatched0_margin_loss + unmatched1_margin_loss) / scores.size(0)
     }
+
+
+def compute_epipolar(kpts0, kpts1, K0, K1, R, T):
+    T = T.unsqueeze(-1)
+
+    E = kornia.geometry.epipolar.essential_from_Rt(
+        R1=torch.eye(3, device=R.device).unsqueeze(0),
+        t1=torch.zeros(1, 3, 1, device=R.device),
+        R2=R.unsqueeze(0), t2=T.unsqueeze(0)
+    )
+    # F = kornia.geometry.epipolar.fundamental_from_essential(E_mat=E, K1=K0, K2=K1)
+
+    epipolar_dist = kornia.geometry.epipolar.symmetrical_epipolar_distance(
+        kpts0.unsqueeze(0),
+        kpts1.unsqueeze(0),
+        E
+    ).squeeze(0)
+    epipolar_loss = torch.abs(torch.mean(epipolar_dist, dim=1)).sum()
+    
+    return epipolar_loss
 
 
 def matched_triplet_criterion(dist, margin, indexes, mean_weights):
