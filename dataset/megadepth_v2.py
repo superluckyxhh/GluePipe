@@ -113,28 +113,28 @@ class MegaDepthCachedDataset(Dataset):
         return lafs, scores, descriptors, K, depth
 
     
-    def limit_kpts(self, keypoints, scores, descriptors, depth, im_id, limit_data, limit_transform):
-        cur_num_kpts = keypoints.size(0)
+    def limit_kpts(self, lafs, scores, descriptors, depth, im_id, limit_data, limit_transform):
+        cur_num_kpts = lafs.size(0)
         if cur_num_kpts > self.limit_num_kpts:
             if self.random_kpts:
                 kpts_select_ids = torch.randperm(cur_num_kpts)[:self.limit_num_kpts]
             else:
                 kpts_select_ids = torch.topk(scores, self.limit_num_kpts, dim=0).indices
        
-            limit_data[f'keypoints{im_id}'] = keypoints[kpts_select_ids]
+            limit_data[f'lafs{im_id}'] = lafs[kpts_select_ids]
             limit_data[f'scores{im_id}'] = scores[kpts_select_ids]
             limit_data[f'descriptors{im_id}'] = descriptors[kpts_select_ids]
             limit_transform[f'depth{im_id}'] = depth[
-                limit_data[f'keypoints{im_id}'][:, 1].type(torch.int64),
-                limit_data[f'keypoints{im_id}'][:, 0].type(torch.int64),
+                limit_data[f'lafs{im_id}'][:, 1, 2].type(torch.int64),
+                limit_data[f'lafs{im_id}'][:, 0, 2].type(torch.int64),
             ]
         else:
-            limit_data[f'keypoints{im_id}'][:cur_num_kpts] = keypoints
+            limit_data[f'lafs{im_id}'][:cur_num_kpts] = lafs
             limit_data[f'scores{im_id}'][:cur_num_kpts] = scores
             limit_data[f'descriptors{im_id}'][:cur_num_kpts] = descriptors
             limit_transform[f'depth{im_id}'][:cur_num_kpts] = depth[
-                keypoints[:, 1].type(torch.int64),
-                keypoints[:, 0].type(torch.int64),
+                lafs[:, 1, 2].type(torch.int64),
+                lafs[:, 0, 2].type(torch.int64),
             ]
         
         return limit_data, limit_transform
@@ -151,7 +151,9 @@ class MegaDepthCachedDataset(Dataset):
         if negative_threshold is None:
             negative_threshold = positive_threshold
         
-        kpts0, kpts1 = limit_data['keypoints0'], limit_data['keypoints1']
+        lafs0, lafs1 = limit_data['lafs0'], limit_data['lafs1']
+        kpts0, kpts1 = lafs0[:, :, -1], lafs1[:, :, -1]
+       
         transformation = limit_data['transformation']
         transformation_inv = get_inverse_transformation(transformation)
         num0, num1 = kpts0.size(0), kpts1.size(0)
@@ -275,12 +277,9 @@ class MegaDepthCachedDataset(Dataset):
         lafs0, scores0, descriptors0, K0, depth0 = self.random_crop_process(self.target_size, image_size0, lafs0, scores0, descriptors0, K0, depth0)
         lafs1, scores1, descriptors1, K1, depth1 = self.random_crop_process(self.target_size, image_size1, lafs1, scores1, descriptors1, K1, depth1)
         
-        
-        kpts0, kpts1 = lafs0[:, :, -1], lafs1[:, :, -1]
-       
         # Numpy to Tensor
-        kpts0 = torch.from_numpy(kpts0)
-        kpts1 = torch.from_numpy(kpts1)
+        lafs0 = torch.from_numpy(lafs0)
+        lafs1 = torch.from_numpy(lafs1)
         
         scores0 = torch.from_numpy(scores0)
         scores1 = torch.from_numpy(scores1)
@@ -294,10 +293,10 @@ class MegaDepthCachedDataset(Dataset):
         # Limit number of keypoints
         desc_dim = descriptors0.size(1)
         limit_data = {
-            'keypoints0': torch.zeros(self.limit_num_kpts, 2),
+            'lafs0': torch.zeros(self.limit_num_kpts, 2, 3),
             'scores0': torch.zeros(self.limit_num_kpts),
             'descriptors0': torch.zeros(self.limit_num_kpts, desc_dim),
-            'keypoints1': torch.zeros(self.limit_num_kpts, 2),
+            'lafs1': torch.zeros(self.limit_num_kpts, 2, 3),
             'scores1': torch.zeros(self.limit_num_kpts),
             'descriptors1': torch.zeros(self.limit_num_kpts, desc_dim),
         }
@@ -312,11 +311,11 @@ class MegaDepthCachedDataset(Dataset):
         }
 
         limit_data, limit_transformation = self.limit_kpts(
-                    kpts0, scores0, descriptors0, 
+                    lafs0, scores0, descriptors0, 
                     depth0, 0, limit_data, limit_transformation
         )
         limit_data, limit_transformation = self.limit_kpts(
-                    kpts1, scores1, descriptors1, 
+                    lafs1, scores1, descriptors1, 
                     depth1, 1, limit_data, limit_transformation
         )
         
@@ -348,8 +347,8 @@ class MegaDepthCachedDataset(Dataset):
             'gt_matches1': torch.stack([x['ground_truth']['gt_matches1'] for x in batch]),
         }
         result = {
-            'keypoints0': torch.stack([x['keypoints0'] for x in batch]),
-            'keypoints1': torch.stack([x['keypoints1'] for x in batch]),
+            'lafs0': torch.stack([x['lafs0'] for x in batch]),
+            'lafs1': torch.stack([x['lafs1'] for x in batch]),
             'scores0': torch.stack([x['scores0'] for x in batch]),
             'scores1': torch.stack([x['scores1'] for x in batch]),
             'descriptors0': torch.stack([x['descriptors0'] for x in batch]),
