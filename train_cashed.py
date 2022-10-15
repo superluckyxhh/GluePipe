@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from models import get_matching_module
 from extractors.superpoint.model import SuperPoint
 from models.superglue.model import SuperGlue
-from dataset.megadepth import MegaDepthCachedDataset
+from dataset.megadepth_v2 import MegaDepthCachedDataset
 from loss_metric.loss import criterion
 from loss_metric.metric import CameraPoseAUC, AccuracyUsingEpipolarDist, test_hpatches
 from dataset.local_affline_transform import get_laf_to_sideinfo_converter
@@ -96,13 +96,7 @@ def main():
     np.random.seed(seed)
     print(f'Set seed to {seed}')
     
-    # Load extractor for test hpatches
-    extractor = SuperPoint({
-        'nms_radius': 1,
-        'keypoint_threshold': 0.01,
-        'max_keypoints': 2048
-    })
-    
+
     # Load Model and Weights (IF EXISTED)
     model = get_matching_module(matching_config['name'])(matching_config).cuda()
     if train_config.get('sota_weight_path', None) is not None:
@@ -187,19 +181,13 @@ def main():
 
     # Checkpoints Settings
     limit_numbers_per_epoch = train_config['steps_per_epoch']
-    flag_pos = matching_config['geometric_position']
-    flag_rot = matching_config['geometric_orientation']
     flag_residual = matching_config['residual']
     
     sota_name = (
         # f'test_' +
         f'{time.strftime("%m%d", time.localtime())}_' + 
-        f'superglue_' +
-        # f'imc2022_geometry_' +
-        # f'geo_pos_{flag_pos}_' +
-        # f'geo_rot_{flag_rot}_' +
-        # f'residual_{flag_residual}_' +
-        # f'cat_offset_cat_rotmatrix_'
+        f'imc2022_geometry_' +
+        f'residual_{flag_residual}_' +
         f'limit_{limit_numbers_per_epoch}'
     )
 
@@ -235,14 +223,14 @@ def main():
             f.write(_context)
         
         # Test Epoch in Hpatches and Save Evaluation
-        eval_hpatches_dict = test_hpatches(model, extractor, epoch, train_config['epochs'])
-        with open(os.path.join(log_config['homography_path_root'], sota_name+'.txt'), 'a+') as g:
-            _hp_context = 'epoch:' + str(epoch) + ' ' + \
-                        'AUC@3:' + str(eval_hpatches_dict['auc@3']) + ' ' + \
-                        'AUC@5:' + str(eval_hpatches_dict['auc@5'])+ ' ' + \
-                        'AUC@10:' + str(eval_hpatches_dict['auc@10'])+ ' ' + \
-                        'inliers:' + str(eval_hpatches_dict['inliers'])+ '\n'
-            g.write(_hp_context)
+        # eval_hpatches_dict = test_hpatches(model, extractor, epoch, train_config['epochs'])
+        # with open(os.path.join(log_config['homography_path_root'], sota_name+'.txt'), 'a+') as g:
+        #     _hp_context = 'epoch:' + str(epoch) + ' ' + \
+        #                 'AUC@3:' + str(eval_hpatches_dict['auc@3']) + ' ' + \
+        #                 'AUC@5:' + str(eval_hpatches_dict['auc@5'])+ ' ' + \
+        #                 'AUC@10:' + str(eval_hpatches_dict['auc@10'])+ ' ' + \
+        #                 'inliers:' + str(eval_hpatches_dict['inliers'])+ '\n'
+        #     g.write(_hp_context)
                   
     print('Train Finish')
         
