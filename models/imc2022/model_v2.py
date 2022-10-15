@@ -1,11 +1,12 @@
 from copy import deepcopy
 from pathlib import Path
 from typing import List, Tuple
-
 import torch
 from torch import nn
 
-from models.imc2022.geometric_pos_rot import GeometricEmbedding
+from models.imc2022.geometry_adaptive_pos import Geometric_Position_Adaptive
+from models.imc2022.geometric_oritation_emb import Geometric_Oritation_Embedding
+from models.imc2022.feedforward import MLPPositionalEncoding
     
     
 def MLP(channels: List[int], do_bn: bool = True) -> nn.Module:
@@ -32,16 +33,16 @@ def normalize_keypoints(kpts, image_shape):
     return (kpts - center[:, None, :]) / scaling[:, None, :]
 
 
-class KeypointEncoder(nn.Module):
-    """ Joint encoding of visual appearance and location using MLPs"""
-    def __init__(self, feature_dim: int, layers: List[int]) -> None:
-        super().__init__()
-        self.encoder = MLP([3] + layers + [feature_dim])
-        nn.init.constant_(self.encoder[-1].bias, 0.0)
+# class KeypointEncoder(nn.Module):
+#     """ Joint encoding of visual appearance and location using MLPs"""
+#     def __init__(self, feature_dim: int, layers: List[int]) -> None:
+#         super().__init__()
+#         self.encoder = MLP([3] + layers + [feature_dim])
+#         nn.init.constant_(self.encoder[-1].bias, 0.0)
 
-    def forward(self, kpts, scores):
-        inputs = [kpts.transpose(1, 2), scores.unsqueeze(1)]
-        return self.encoder(torch.cat(inputs, dim=1))
+#     def forward(self, kpts, scores):
+#         inputs = [kpts.transpose(1, 2), scores.unsqueeze(1)]
+#         return self.encoder(torch.cat(inputs, dim=1))
     
 
 def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
@@ -149,14 +150,17 @@ class IMCNet(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = {**self.default_config, **config}
-
-        self.geometric_embedding = GeometricEmbedding(
-            self.config['descriptor_dim'], 
-            self.config['geometric_position'],
-            self.config['geometric_orientation'])
- 
-        self.kenc = KeypointEncoder(
-            self.config['descriptor_dim'], self.config['keypoint_encoder'])
+                       
+        self.geo_rot_emb = Geometric_Oritation_Embedding()
+        self.geo_adapt_pos = Geometric_Position_Adaptive(
+            self.config['descriptor_dim']
+        )
+        self.config['positional_encoding']['side_info_size'] = \
+            self.geo_rot_emb.side_info_dim + 1  # plus 1 for responses
+            
+        self.position_encoding = MLPPositionalEncoding(**self.config['positional_encoding'])
+        # self.kenc = KeypointEncoder(
+        #     self.config['descriptor_dim'], self.config['keypoint_encoder'])
 
         self.gnn = AttentionalGNN(
             feature_dim=self.config['descriptor_dim'], layer_names=self.config['GNN_layers'])
@@ -165,6 +169,7 @@ class IMCNet(nn.Module):
             self.config['descriptor_dim'], self.config['descriptor_dim'],
             kernel_size=1, bias=True)
         
+        self.log_response = self.config.get('log_scores', False)
         self.residual = self.config.get('residual', False)
         if self.residual:
             self.mix_coefs = nn.parameter.Parameter(torch.zeros(self.config['descriptor_dim'], 1))
@@ -177,19 +182,34 @@ class IMCNet(nn.Module):
         """Run SuperGlue on a pair of keypoints and descriptors"""
         desc0, desc1 = data['descriptors0'], data['descriptors1']
         desc0, desc1 = desc0.transpose(1, 2).contiguous(), desc1.transpose(1, 2).contiguous()
-        kpts0, kpts1 = data['keypoints0'], data['keypoints1']
         image0_size, image1_size = data['image0_size'][::-1], data['image1_size'][::-1]
-
-        # Step1. Keypoint normalization & Gemetric keypoints        
+        
+        scores0, scores1 = data['scores0'].unsqueeze(-1), data['scores1'].unsqueeze(-1) 
+        lafs0, lafs1 = data['lafs0'], data['lafs1']
+        kpts0, kpts1 = lafs0[:, :, :, -1], lafs1[:, :, :, -1]
+        
+        # Pre-Process : lafs --> side_info
+        side_info0 = self.geo_rot_emb(lafs0)
+        side_info1 = self.geo_rot_emb(lafs1)
+        
+        if self.log_response:
+            scores0 = (scores0 + 0.1).log()
+            scores1 = (scores1 + 0.1).log()
+            
+        side_info0 = torch.cat([scores0, side_info0], dim=-1)
+        side_info1 = torch.cat([scores1, side_info1], dim=-1)
+        
+        # Step1. Keypoint normalization      
         kpts0, kpts1 = normalize_keypoints(kpts0, image0_size), normalize_keypoints(kpts1, image1_size)
         kpts0, kpts1 = kpts0.transpose(1, 2).contiguous(), kpts1.transpose(1, 2).contiguous()
-        kpts0 = self.geometric_embedding(kpts0, desc0)
-        kpts1 = self.geometric_embedding(kpts1, desc1)
+        kpts0 = self.geo_adapt_pos(kpts0, desc0)
+        kpts1 = self.geo_adapt_pos(kpts1, desc1)
         kpts0, kpts1 = kpts0.transpose(1, 2).contiguous(), kpts1.transpose(1, 2).contiguous()
         
-        # Keypoint MLP encoder.
-        desc0 = desc0 + self.kenc(kpts0, data['scores0'])
-        desc1 = desc1 + self.kenc(kpts1, data['scores1'])
+        # Keypoint MLP encoder (side_info & keypoints)
+        pe0, pe1 = self.position_encoding(kpts0, side_info0), self.position_encoding(kpts1, side_info1)
+        
+        desc0, desc1 = desc0 + pe0, desc1 + pe1         
 
         # Multi-layer Transformer network.
         gdesc0, gdesc1 = self.gnn(desc0, desc1)
@@ -214,9 +234,7 @@ class IMCNet(nn.Module):
         return {
             'context_descriptors0': gdesc0,
             'context_descriptors1': gdesc1,
-            'scores': scores,
-            'keypoints0': kpts0,
-            'keypoints1': kpts1,
+            'scores': scores
         }
     
     
@@ -224,19 +242,33 @@ class IMCNet(nn.Module):
         # run feature extractor on both images
         desc0, desc1 = data['descriptors0'], data['descriptors1']
         desc0, desc1 = desc0.transpose(1, 2).contiguous(), desc1.transpose(1, 2).contiguous()
-        unnorm_kpts0, unnorm_kpts1 = data['keypoints0'], data['keypoints1']
         image0_size, image1_size = data['image0_size'][::-1], data['image1_size'][::-1]
+        
+        scores0, scores1 = data['scores0'].unsqueeze(-1), data['scores1'].unsqueeze(-1) 
+        lafs0, lafs1 = data['lafs0'], data['lafs1']
+        unnorm_kpts0, unnorm_kpts1 = lafs0[:, :, :, -1], lafs1[:, :, :, -1]
+        
+        # Pre-Process : lafs --> side_info
+        side_info0 = self.geo_rot_emb(lafs0)
+        side_info1 = self.geo_rot_emb(lafs1)
+        
+        if self.log_response:
+            scores0 = (scores0 + 0.1).log()
+            scores1 = (scores1 + 0.1).log()
+            
+        side_info0 = torch.cat([scores0, side_info0], dim=-1)
+        side_info1 = torch.cat([scores1, side_info1], dim=-1)
 
-        # Step1. Keypoint normalization & Gemetric keypoints        
+        # Step1. Keypoint normalization      
         kpts0, kpts1 = normalize_keypoints(unnorm_kpts0, image0_size), normalize_keypoints(unnorm_kpts1, image1_size)
         kpts0, kpts1 = kpts0.transpose(1, 2).contiguous(), kpts1.transpose(1, 2).contiguous()
-        kpts0 = self.geometric_embedding(kpts0, desc0)
-        kpts1 = self.geometric_embedding(kpts1, desc1)
+        kpts0 = self.geo_adapt_pos(kpts0, desc0)
+        kpts1 = self.geo_adapt_pos(kpts1, desc1)
         kpts0, kpts1 = kpts0.transpose(1, 2).contiguous(), kpts1.transpose(1, 2).contiguous()
-  
-        # Keypoint MLP encoder.
-        desc0 = desc0 + self.kenc(kpts0, data['scores0'])
-        desc1 = desc1 + self.kenc(kpts1, data['scores1'])
+        
+        # Keypoint MLP encoder (side_info & keypoints)
+        pe0, pe1 = self.position_encoding(kpts0, side_info0), self.position_encoding(kpts1, side_info1)
+        desc0, desc1 = desc0 + pe0, desc1 + pe1 
 
         # Multi-layer Transformer network.
         gdesc0, gdesc1 = self.gnn(desc0, desc1)

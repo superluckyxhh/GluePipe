@@ -21,6 +21,7 @@ class GeometricEmbedding(nn.Module):
         self.register_buffer('regular_pts', regular_pts.float())
         self.eps = eps
         self.pi = torch.pi
+        self.rotation = 0.
         self.transform_rotation = nn.Conv1d(d_model, 4, 3, 1, 1, bias=True)
         self.transform_translation = nn.Conv1d(d_model, 2, 3, 1, 1, bias=True)
 
@@ -91,7 +92,8 @@ class GeometricEmbedding(nn.Module):
             rad = torch.atan(tan_theta)
             main_rad, _ = torch.max(rad, dim=1, keepdim=True)
             rotation = self.anglerad_to_rotation_matrix(main_rad)
-            
+            # Normlize rotation matrix
+            rotation = F.normalize(self.rotation, p=2, dim=-1)
             # [b, 2, n] --> [b, n, 2]
             pts = pts.transpose(1, 2).contiguous()
             # [b, n, 2] @ [b, n, 2, 2] --> [b, n, 2]
@@ -99,7 +101,7 @@ class GeometricEmbedding(nn.Module):
             # [b, n, 2] --> [b, 2, n]
             pts = pts.transpose(1, 2).contiguous()
             
-            pts = self.conv(pts)
+            pts = self.conv(pts)    
             pts = self.bn(pts)
 
         return pts
